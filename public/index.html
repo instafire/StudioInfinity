@@ -1,0 +1,830 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>MYA Studio</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* --- 1. CLIPPER & EVENT VIEW: INTEGRATED BARS --- */
+        .timeline-used-segment {
+            position: absolute;
+            height: 5px; bottom: 0; background: #fbbf24; opacity: 0.7; z-index: 8; pointer-events: none; transition: opacity 0.2s; box-shadow: 0 -1px 2px rgba(0,0,0,0.5);
+        }
+        .timeline-container:hover .timeline-used-segment { opacity: 1; }
+
+        /* --- 2. LOGIC VIEW: SEPARATE TRACK --- */
+        .timeline-usage-track {
+            height: 8px; background: rgba(255, 255, 255, 0.05); margin-top: 4px; position: relative; border-radius: 2px; overflow: hidden;
+        }
+        .usage-marker {
+            position: absolute; height: 100%; background: #fbbf24; opacity: 0.6; border-radius: 1px;
+        }
+        .usage-marker:hover { opacity: 1; background: #f59e0b; }
+
+        /* --- 3. GRAPH VISUAL EDITOR --- */
+        .node-port {
+            width: 14px; height: 14px;
+            background: #3b82f6;
+            border: 2px solid white;
+            border-radius: 50%;
+            position: absolute;
+            right: -7px; 
+            top: 43px;   
+            cursor: crosshair;
+            z-index: 30;
+            transition: transform 0.2s;
+        }
+        .node-port:hover { transform: scale(1.5); }
+        
+        .connection-line:hover { stroke: #ef4444; stroke-width: 4px; cursor: pointer; }
+
+        /* --- 4. DRAG & DROP SEQUENCE --- */
+        .seq-item.dragging { opacity: 0.5; border: 2px dashed #3b82f6; }
+
+        /* --- 5. PREVIEW SMART SKIP ZONES --- */
+        .timeline-skip-zone {
+            position: absolute; top: 0; bottom: 0;
+            background: repeating-linear-gradient(
+                -45deg,
+                rgba(220, 38, 38, 0.6),
+                rgba(220, 38, 38, 0.6) 5px,
+                rgba(220, 38, 38, 0.3) 5px,
+                rgba(220, 38, 38, 0.3) 10px
+            );
+            z-index: 15;
+            border-left: 2px solid #ef4444;
+            border-right: 2px solid #ef4444;
+            pointer-events: none;
+            opacity: 0.8;
+            border-radius: 2px;
+        }
+
+        /* --- EXISTING STYLES --- */
+        body { background: radial-gradient(circle at top right, #1e1b4b, #020617); color: #e2e8f0; font-family: 'Inter', sans-serif; font-size: 13px; }
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+        .glass-panel { background: rgba(15, 23, 42, 0.6); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.05); box-shadow: 0 4px 30px rgba(0, 0, 0, 0.3); }
+        .glass-input { background: rgba(0, 0, 0, 0.3); border: 1px solid rgba(255, 255, 255, 0.1); color: white; transition: all 0.2s; font-size: 12px; }
+        .glass-input:focus { border-color: #3b82f6; box-shadow: 0 0 10px rgba(59, 130, 246, 0.2); outline: none; }
+        .glass-btn { background: rgba(59, 130, 246, 0.2); border: 1px solid rgba(59, 130, 246, 0.3); color: #60a5fa; transition: all 0.2s; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
+        .glass-btn:hover { background: rgba(59, 130, 246, 0.4); box-shadow: 0 0 15px rgba(59, 130, 246, 0.4); transform: translateY(-1px); color: white; }
+        .glass-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
+        select { background-color: #0f172a !important; color: white !important; border: 1px solid rgba(255,255,255,0.1); }
+        option { background-color: #020617; color: white; }
+        .project-card-3d { transition: all 0.4s ease; border: 1px solid rgba(255, 255, 255, 0.1); }
+        .project-card-3d:hover { transform: translateY(-5px) scale(1.02); box-shadow: 0 10px 30px -10px rgba(59, 130, 246, 0.5); border-color: rgba(59, 130, 246, 0.5); background: rgba(30, 41, 59, 0.8); }
+        .monitor-overlay { position: relative; overflow: hidden; }
+        .monitor-overlay::after { content: " "; display: block; position: absolute; top: 0; left: 0; bottom: 0; right: 0; background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.1) 50%); background-size: 100% 4px; z-index: 2; pointer-events: none; }
+        .node-graph-grid { background-color: #0f111a; background-image: linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px); background-size: 40px 40px; cursor: grab; position: relative; overflow: hidden; animation: gridPulse 10s ease-in-out infinite; }
+        @keyframes gridPulse { 0%, 100% { background-size: 40px 40px; } 50% { background-size: 44px 44px; } }
+        .node-graph-grid:active { cursor: grabbing; }
+        path.connection-line { fill: none; stroke: #f97316; stroke-width: 2px; opacity: 0.8; stroke-dasharray: 10; animation: dash 1s linear infinite; stroke-linecap: round; }
+        path.connection-line.is-return { stroke-dasharray: 6, 3; stroke: #ef4444; animation: dash-reverse 1s linear infinite; }
+        path.connection-line.is-sequence { stroke: #3b82f6; stroke-width: 3px; stroke-opacity: 0.6; animation: dash 1.5s linear infinite; }
+        @keyframes dash { to { stroke-dashoffset: -20; } }
+        @keyframes dash-reverse { to { stroke-dashoffset: 20; } }
+        .equalizer { display: flex; gap: 2px; align-items: flex-end; height: 12px; width: 15px; margin-left: 5px; margin-right: 5px; }
+        .bar { width: 3px; background: #60a5fa; animation: eq 0.5s infinite ease-in-out; }
+        .bar:nth-child(2) { animation-delay: 0.1s; height: 60%; }
+        .bar:nth-child(3) { animation-delay: 0.2s; height: 30%; }
+        @keyframes eq { 0%, 100% { height: 20%; } 50% { height: 100%; } }
+        
+        .choice-enter-active { animation: slideInUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards; opacity: 0; }
+        @keyframes slideInUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        
+        .timeline-container { height: 18px; background: rgba(0,0,0,0.3); border-radius: 4px; position: relative; overflow: hidden; cursor: pointer; border: 1px solid rgba(255,255,255,0.1); }
+        .timeline-playhead { height: 100%; width: 2px; background: #ef4444; position: absolute; z-index: 10; pointer-events: none; box-shadow: 0 0 8px #ef4444; }
+        .timeline-fill { height: 100%; background: rgba(59, 130, 246, 0.3); position: absolute; }
+        .marker-start { background: #60a5fa; height:100%; width:2px; position:absolute; z-index:5; }
+        .marker-end { background: #c084fc; height:100%; width:2px; position:absolute; z-index:5; }
+        .time-label { position: absolute; top: -16px; font-size: 9px; font-weight: bold; padding: 0px 3px; border-radius: 2px; pointer-events: none; white-space: nowrap; transform: translateX(-50%); }
+        .label-start { background: #60a5fa; color: #000; }
+        .label-end { background: #c084fc; color: #000; }
+        .choice-card-overlay { transition: all 0.2s; cursor: pointer; border: 2px solid transparent; border-radius: 0.5rem; overflow: hidden; box-shadow: 0 4px 10px rgba(0,0,0,0.5); position: relative; }
+        .choice-card-overlay:hover { transform: scale(1.05); border-color: #3b82f6; box-shadow: 0 0 20px rgba(59,130,246,0.6); }
+        .toast-enter-active, .toast-leave-active { transition: all 0.3s ease; }
+        .toast-enter-from, .toast-leave-to { opacity: 0; transform: translateY(20px); }
+        .marker-trigger { width: 4px; height: 100%; background: #fbbf24; position: absolute; top: 0; cursor: pointer; z-index: 8; box-shadow: 0 0 4px #fbbf24; }
+        .marker-trigger:hover { background: #fff; transform: scaleX(1.5); }
+        .graph-node { position: absolute; width: 180px; height: 100px; background: #1e293b; border-radius: 8px; box-shadow: 0 5px 10px -3px rgba(0, 0, 0, 0.5); transition: border-color 0.2s, transform 0.2s; display: flex; flex-direction: column; overflow: hidden; border: 2px solid #475569; z-index: 10; }
+        .graph-node:hover { transform: scale(1.02); z-index: 20; border-color: #60a5fa; }
+        .graph-node.is-source { border-color: #10b981; box-shadow: 0 0 15px rgba(16, 185, 129, 0.2); }
+        .graph-node.is-target { border-color: #f97316; box-shadow: 0 0 10px rgba(249, 115, 22, 0.15); }
+        .graph-node.is-game-over { border-color: #ef4444; box-shadow: 0 0 15px rgba(239, 68, 68, 0.6); animation: pulseRed 2s infinite; }
+        @keyframes pulseRed { 0% { box-shadow: 0 0 15px rgba(239, 68, 68, 0.4); } 50% { box-shadow: 0 0 25px rgba(239, 68, 68, 0.8); } 100% { box-shadow: 0 0 15px rgba(239, 68, 68, 0.4); } }
+        .graph-node.is-sequence { border-color: #3b82f6; box-shadow: 0 0 15px rgba(59, 130, 246, 0.3); }
+        .node-thumb { width: 100%; height: 70px; object-fit: cover; background: #000; }
+        .node-footer { padding: 4px; background: rgba(0,0,0,0.9); flex: 1; display: flex; align-items: center; justify-content: center; }
+        .node-title { font-size: 10px; font-weight: bold; text-align: center; color: white; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 100%; }
+        .play-icon { position: absolute; top: 35px; left: 50%; transform: translate(-50%, -50%); font-size: 20px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.8)); opacity: 0.8; }
+        .seq-badge { position: absolute; top: 4px; left: 4px; background: #3b82f6; color: white; font-weight: bold; font-size: 9px; padding: 1px 4px; border-radius: 3px; z-index: 5; }
+        svg.connections { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5; }
+        .edge-label { position: absolute; transform: translate(-50%, -50%); background: #0f172a; border: 1px solid #f97316; color: #fdba74; padding: 2px 8px; border-radius: 12px; font-size: 9px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.5); pointer-events: none; z-index: 15; white-space: nowrap; }
+        .edge-label.seq-label { border-color: #3b82f6; color: #93c5fd; }
+        .preview-overlay { position: fixed; inset: 0; background: black; z-index: 100; display: flex; flex-direction: column; }
+        .preview-card { cursor: pointer; border: 1px solid rgba(255,255,255,0.2); transition: all 0.2s; position: relative; overflow: hidden; background: rgba(0,0,0,0.6); backdrop-filter: blur(10px); }
+        .preview-card:hover { transform: scale(1.05); border-color: #3b82f6; box-shadow: 0 0 20px rgba(59,130,246,0.5); }
+        .preview-card.locked { opacity: 0.5; filter: grayscale(1); pointer-events: none; }
+        .controls-bar { position: absolute; bottom: 0; left: 0; width: 100%; background: linear-gradient(to top, rgba(0,0,0,0.95), transparent); padding: 10px 20px; display: flex; align-items: center; gap: 10px; opacity: 0; transition: opacity 0.3s; z-index: 60; }
+        .controls-bar:hover, .video-hover-zone:hover .controls-bar { opacity: 1; }
+        .preview-timeline-track { flex: 1; height: 4px; background: rgba(255,255,255,0.2); border-radius: 2px; cursor: pointer; position: relative; }
+        .preview-timeline-fill { height: 100%; background: #3b82f6; border-radius: 2px; position: absolute; top: 0; left: 0; }
+        .preview-thumb-knob { width: 10px; height: 10px; background: white; border-radius: 50%; position: absolute; top: -3px; margin-left: -5px; pointer-events: none; box-shadow: 0 0 4px rgba(0,0,0,0.5); z-index: 20; }
+        .timeline-logic-marker { width: 6px; height: 6px; background: #fbbf24; border-radius: 50%; position: absolute; top: -1px; transform: translateX(-50%); z-index: 5; pointer-events: none; box-shadow: 0 0 4px #fbbf24; }
+        .vol-slider { width: 60px; height: 4px; accent-color: #3b82f6; cursor: pointer; }
+        .seen-segment { position: absolute; height: 100%; background: rgba(100, 116, 139, 0.5); z-index: 4; pointer-events: none; border-left: 1px solid rgba(255,255,255,0.1); border-right: 1px solid rgba(255,255,255,0.1); }
+        .seen-segment::after { content:''; display:block; height:100%; width:100%; background-image: linear-gradient(45deg, rgba(255,255,255,0.05) 25%, transparent 25%, transparent 50%, rgba(255,255,255,0.05) 50%, rgba(255,255,255,0.05) 75%, transparent 75%, transparent); background-size: 8px 8px; }
+        .glitch { font-size: 3rem; font-weight: bold; color: #ef4444; text-shadow: 2px 2px #000; animation: glitch 1s infinite; }
+        @keyframes glitch { 0%{transform:translate(0)} 20%{transform:translate(-2px,2px)} 40%{transform:translate(-2px,-2px)} 60%{transform:translate(2px,2px)} 80%{transform:translate(2px,-2px)} 100%{transform:translate(0)} }
+        [v-cloak] { display: none; }
+    </style>
+</head>
+<body class="h-screen w-screen overflow-hidden flex flex-col">
+
+<div id="app" class="flex-1 flex flex-col h-full w-full min-h-0" v-cloak>
+
+    <div class="flex-shrink-0 flex justify-between items-center px-4 py-2 glass-panel z-20 m-1 rounded-lg">
+        <div class="flex items-center gap-3 cursor-pointer" @click="view='projects'">
+            <span class="text-2xl">🎬</span>
+            <div><h1 class="font-bold text-white text-base tracking-tight leading-none"> MYA </h1><div class="text-[9px] text-blue-400 uppercase tracking-widest font-bold">{{ currentProject ? currentProject.title : 'Select Project' }}</div></div>
+        </div>
+        <div class="flex gap-1" v-if="currentProject">
+            <button @click="view='upload'" :class="navClass('upload')">Import</button>
+            <button @click="view='clipper'" :class="navClass('clipper')">Edit</button>
+            <button @click="view='library'" :class="navClass('library')">Library</button>
+            <button @click="view='eventCreator'" :class="navClass('eventCreator')">⚡Event</button>
+            <button @click="view='logic'" :class="navClass('logic')">Logic</button>
+            <button @click="view='variables'; fetchVariables()" :class="navClass('variables')">🧩 Vars</button>
+            <button @click="fetchStats" :class="navClass('stats')">Stats</button>
+            <button @click="view='publish'; refreshData(); fetchExports()" :class="navClass('publish')">Publish</button>
+        </div>
+    </div>
+
+    <datalist id="varOptions">
+        <option v-for="v in variables" :value="v.name"></option>
+    </datalist>
+
+    <div class="flex-1 min-h-0 overflow-hidden relative flex flex-col">
+
+        <div v-if="view === 'projects'" class="flex-1 p-6 overflow-y-auto flex flex-col items-center">
+            <div class="w-full max-w-5xl">
+                <div class="flex justify-between items-center mb-6"><h2 class="text-2xl font-bold text-white">Project Library</h2><button @click="createProject" class="glass-btn px-4 py-2 rounded-lg font-bold">+ New</button></div>
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <div v-for="p in projects" :key="p.id" class="glass-panel project-card-3d p-4 cursor-pointer relative group" @click="selectProject(p)">
+                        <button @click.stop="deleteProject(p)" class="absolute top-2 right-2 text-slate-600 hover:text-red-500 opacity-0 group-hover:opacity-100 transition px-2 py-1 rounded hover:bg-white/10 font-bold text-xs">🗑️</button>
+                        <h3 class="text-lg font-bold text-white mb-1 group-hover:text-blue-400 transition">{{ p.title }}</h3>
+                        <p class="text-[10px] text-slate-400">Created: {{ new Date(p.created_at).toLocaleDateString() }}</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div v-if="view === 'upload'" class="flex-1 flex items-center justify-center p-4 overflow-y-auto">
+            <div class="glass-panel p-8 text-center w-full max-w-xl">
+                <div class="text-5xl mb-4 opacity-80 filter drop-shadow-lg">📤</div>
+                <h2 class="text-2xl font-bold mb-3 text-white">Import Media</h2>
+                <input type="file" ref="fileInput" class="hidden" @change="handleFileSelect">
+                <button @click="$refs.fileInput.click()" class="glass-input w-full py-6 rounded-xl border-dashed mb-4 hover:bg-white/5"><span class="block text-lg font-bold transition">{{ selectedFile ? selectedFile.name : 'Click to Browse Files' }}</span></button>
+                <button v-if="selectedFile" @click="uploadVideo" class="glass-btn bg-blue-600/20 text-white w-full py-3 rounded-lg font-bold" :disabled="uploading">{{ uploading ? 'Uploading (Please Wait)...' : 'Import to Project' }}</button>
+            </div>
+        </div>
+
+        <div v-if="view === 'clipper'" class="flex-1 flex gap-2 p-2 overflow-hidden">
+            <div class="flex-1 flex flex-col glass-panel overflow-hidden min-w-0">
+                <div class="flex-shrink-0 p-2 flex gap-2 items-center border-b border-white/5 bg-black/20">
+                    <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Source</span>
+                    <select v-model="selectedVidId" @change="loadVideo" class="glass-input rounded px-2 py-1 text-xs flex-1"><option :value="null">-- Select Video --</option><option v-for="v in videos" :value="v.id">📂 {{ v.filename }} ({{ formatDuration(v.duration) }})</option></select>
+                    <button @click="deleteVideo" v-if="selectedVidId" class="text-red-400 hover:text-red-300 px-2 transition text-xs">🗑️</button>
+                </div>
+                
+                <div class="flex-1 relative bg-black flex items-center justify-center overflow-hidden monitor-overlay">
+                    <video v-if="videoUrl" ref="video" :src="videoUrl" @timeupdate="updateProgress" controls class="max-h-full max-w-full object-contain relative z-10"></video>
+                </div>
+                
+                <div class="p-1 border-t border-white/5 flex gap-4 items-center overflow-x-auto bg-black/40 flex-shrink-0">
+                    <div class="flex items-center gap-2"><span class="text-[9px] text-slate-400 font-bold uppercase">Filter</span><select v-model="clipFilter" class="glass-input text-[10px] p-0.5 rounded w-16"><option value="none">None</option><option value="bw">BW</option><option value="sepia">Sepia</option><option value="vivid">Vivid</option></select></div>
+                    <div class="flex items-center gap-2"><span class="text-[9px] text-slate-400 font-bold uppercase">Spd:{{clipSpeed}}x</span><input type="range" min="0.5" max="2.0" step="0.5" v-model="clipSpeed" class="w-16 accent-blue-500 h-1"></div>
+                    <div class="flex items-center gap-2"><span class="text-[9px] text-slate-400 font-bold uppercase">Vol:{{clipVolume}}</span><input type="range" min="0" max="2.0" step="0.1" v-model="clipVolume" class="w-16 accent-green-500 h-1"></div>
+                </div>
+                
+                <div class="flex-shrink-0 p-2 border-t border-white/5 bg-slate-900/50">
+                    <div class="timeline-container mb-2" @click="seekTimeline">
+                        <div class="timeline-playhead" :style="{left: playheadPercent + '%'}"></div>
+                        <div class="timeline-fill" :style="{left: startPercent + '%', width: (endPercent - startPercent) + '%'}"></div>
+                        <div class="timeline-marker marker-start" :style="{left: startPercent + '%'}"><div class="time-label label-start">{{ formatDuration(clipStart) }}</div></div>
+                        <div class="timeline-marker marker-end" :style="{left: endPercent + '%'}"><div class="time-label label-end">{{ formatDuration(clipEnd) }}</div></div>
+                        <div v-for="(seg, idx) in sourceUsageSegments" :key="'used-'+idx" 
+                             class="timeline-used-segment" 
+                             :style="{left: seg.left+'%', width: seg.width+'%'}" 
+                             :title="'Already used in: ' + seg.name">
+                        </div>
+                    </div>
+                    <div class="flex gap-2 h-8">
+                        <div class="flex items-center gap-0.5 glass-input rounded"><button @click="nudge('start', -0.1)" class="px-2 text-slate-400 hover:text-white">➖</button><button @click="setStart" class="px-1 text-blue-400 font-bold text-[10px]">IN</button><button @click="nudge('start', 0.1)" class="px-2 text-slate-400 hover:text-white">➕</button></div>
+                        <div class="flex items-center gap-0.5 glass-input rounded"><button @click="nudge('end', -0.1)" class="px-2 text-slate-400 hover:text-white">➖</button><button @click="setEnd" class="px-1 text-purple-400 font-bold text-[10px]">OUT</button><button @click="nudge('end', 0.1)" class="px-2 text-slate-400 hover:text-white">➕</button></div>
+                        <input v-model="clipName" placeholder="Scene Name..." class="glass-input flex-1 px-3 rounded font-bold text-xs">
+                        <button @click="cutClip" class="glass-btn px-4 rounded font-bold text-xs bg-blue-600/30 text-white" :disabled="processingClip">{{ processingClip ? '⏳ Processing...' : '✂️ Create' }}</button>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="w-60 glass-panel flex flex-col overflow-hidden">
+                <div class="p-2 border-b border-white/5 flex-shrink-0 bg-black/20"><span class="font-bold text-white text-[10px] uppercase tracking-wider">Clip Library</span></div>
+                <div class="flex-1 overflow-y-auto p-2 space-y-2">
+                    <div v-for="c in clips" :key="c.id" class="flex gap-2 p-1.5 rounded border border-white/5 hover:bg-white/5 transition relative group items-center">
+                        <div class="w-14 h-9 bg-black rounded overflow-hidden flex-shrink-0 border border-white/10"><img v-if="c.thumbnail" :src="c.thumbnail" class="w-full h-full object-cover"></div>
+                        <div class="flex-1 min-w-0 flex flex-col justify-center"><div class="font-bold text-white text-[10px] truncate">{{ c.name }}</div><div class="text-[9px] text-blue-400 font-mono">{{ c.duration.toFixed(1) }}s</div></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div v-if="view === 'eventCreator'" class="flex-1 flex gap-2 p-2 overflow-hidden relative">
+            <div class="flex-1 flex flex-col glass-panel overflow-hidden min-w-0 relative">
+                <div class="flex-shrink-0 p-2 flex gap-2 items-center border-b border-white/5 bg-indigo-900/20">
+                    <span class="text-[10px] font-bold text-indigo-300 uppercase tracking-wider">{{ isEditingEvent ? '✏️ Edit: ' + clipName : 'Event Gen' }}</span>
+                    <select v-if="!isEditingEvent" v-model="selectedVidId" @change="loadVideo" class="glass-input rounded px-2 py-1 text-xs flex-1"><option :value="null">-- Source --</option><option v-for="v in videos" :value="v.id">📂 {{ v.filename }}</option></select>
+                    <div v-else class="flex-1 text-[10px] text-slate-400 italic px-2">Source locked.</div>
+                </div>
+                
+                <div class="flex-1 relative bg-black flex items-center justify-center overflow-hidden monitor-overlay">
+                    <video v-if="!previewEventClip && videoUrl" ref="eventVideo" :src="videoUrl" @timeupdate="updateEventProgress" controls class="max-h-full max-w-full object-contain relative z-10"></video>
+                    
+                    <div v-if="previewEventClip" class="absolute inset-0 z-20 bg-black flex flex-col">
+                        <div class="absolute top-2 right-2 z-50"><button @click="closeTestEvent" class="bg-red-600 hover:bg-red-500 text-white px-3 py-1 rounded text-xs font-bold shadow-lg">✕ End Test</button></div>
+                        <video ref="testPlayer" :src="previewEventClip.filepath" autoplay controls class="w-full h-full object-contain" @timeupdate="checkTestLogic"></video>
+                        
+                        <div v-if="showTestChoices" class="absolute inset-0 bg-black/80 flex flex-col justify-center items-center z-30">
+                             <h3 class="text-3xl text-white font-bold mb-8 drop-shadow-[0_0_15px_rgba(255,255,255,0.3)]">Test Interaction</h3>
+                             
+                             <div class="flex flex-wrap gap-6 justify-center px-10">
+                                 <div v-for="(opt, i) in testChoices" :key="i" @click="simulateChoice(opt)" 
+                                      class="preview-card group relative" 
+                                      :style="{borderColor: opt.text_color || '#fff', opacity: 1, transform: 'none', width: '16rem', height: '9rem'}">
+                                     
+                                     <div class="absolute inset-0 w-full h-full bg-slate-800"></div>
+
+                                     <img v-if="getClipThumb(opt.to_id || opt.toId)" 
+                                          :src="getClipThumb(opt.to_id || opt.toId)" 
+                                          class="absolute inset-0 w-full h-full object-cover opacity-80 group-hover:opacity-100 transition duration-500 scale-100 group-hover:scale-110 z-10">
+                                     
+                                     <div class="absolute bottom-0 left-0 w-full p-3 text-center font-bold text-lg tracking-wide bg-gradient-to-t from-black via-black/80 to-transparent pt-8 z-20" :style="{color: opt.text_color || '#fff'}">
+                                         {{ opt.label }}
+                                     </div>
+                                 </div>
+                                 <div v-if="testChoices.length === 0" class="text-slate-500 italic">No options found.</div>
+                             </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex-shrink-0 p-2 border-t border-white/5 bg-slate-900/50">
+                    <div v-if="!isEditingEvent && !previewEventClip">
+                        <div class="timeline-container mb-2" @click="seekEventTimeline">
+                            <div class="timeline-playhead" :style="{left: playheadPercent + '%'}"></div>
+                            <div class="timeline-fill bg-indigo-500/30" :style="{left: startPercent + '%', width: (endPercent - startPercent) + '%'}"></div>
+                            <div class="timeline-marker marker-start" :style="{left: startPercent + '%'}"><div class="time-label label-start">{{ formatDuration(clipStart) }}</div></div>
+                            <div class="timeline-marker marker-end" :style="{left: endPercent + '%'}"><div class="time-label label-end">{{ formatDuration(clipEnd) }}</div></div>
+                            <div v-for="(seg, idx) in sourceUsageSegments" :key="'used-'+idx" 
+                                 class="timeline-used-segment" 
+                                 :style="{left: seg.left+'%', width: seg.width+'%'}" 
+                                 :title="'Already used in: ' + seg.name">
+                            </div>
+                        </div>
+                        <div class="flex gap-2 mb-2 h-7">
+                             <div class="flex items-center gap-0.5 glass-input rounded"><button @click="nudge('start', -0.1)" class="px-2 text-slate-400 hover:text-white">➖</button><button @click="setStart" class="px-1 text-blue-400 font-bold text-[10px]">IN</button><button @click="nudge('start', 0.1)" class="px-2 text-slate-400 hover:text-white">➕</button></div>
+                             <div class="flex items-center gap-0.5 glass-input rounded"><button @click="nudge('end', -0.1)" class="px-2 text-slate-400 hover:text-white">➖</button><button @click="setEnd" class="px-1 text-purple-400 font-bold text-[10px]">OUT</button><button @click="nudge('end', 0.1)" class="px-2 text-slate-400 hover:text-white">➕</button></div>
+                             <input v-model="clipName" placeholder="Event Name..." class="glass-input flex-1 px-3 rounded font-bold text-xs border-indigo-500/30">
+                        </div>
+                    </div>
+                    <div v-else-if="!previewEventClip" class="mb-2">
+                        <input v-model="clipName" class="glass-input w-full px-3 py-1 rounded font-bold text-xs border-indigo-500/30">
+                    </div>
+
+                    <div v-if="!previewEventClip" class="bg-black/20 rounded-lg p-2 border border-indigo-500/20">
+                        <h4 class="text-[9px] font-bold text-indigo-400 uppercase mb-2">Logic Options</h4>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-2 mb-2">
+                            <div v-for="(opt, idx) in eventChoices" :key="idx" class="bg-black/40 p-1.5 rounded border border-white/10 flex flex-col gap-1">
+                                <div class="flex gap-1 items-center">
+                                    <input type="color" v-model="opt.color" class="bg-transparent border-none h-4 w-4 cursor-pointer p-0">
+                                    <input v-model="opt.label" class="glass-input flex-1 p-0.5 rounded text-[10px]" placeholder="Label">
+                                    <button @click="eventChoices.splice(idx,1)" class="text-red-400 hover:text-white px-1 text-[10px]">✕</button>
+                                </div>
+                                <select v-model="opt.toId" class="glass-input w-full p-0.5 rounded text-[9px]">
+                                    <option :value="null">Target...</option>
+                                    <optgroup label="Events"><option v-for="c in eventClips" :value="c.unique_id">⚡ {{ c.name }}</option></optgroup>
+                                    <optgroup label="Clips"><option v-for="c in subClips" :value="c.unique_id">{{ c.name }}</option></optgroup>
+                                </select>
+                                <div class="flex items-center gap-1">
+                                    <label class="text-[8px] text-yellow-400 flex items-center gap-0.5 cursor-pointer"><input type="checkbox" v-model="opt.returnToMain" class="mr-0.5">Ret</label>
+                                    <input v-model="opt.setVar" placeholder="Set" list="varOptions" class="glass-input flex-1 p-0.5 rounded text-[9px]">
+                                    <input v-model="opt.reqVar" placeholder="Req" list="varOptions" class="glass-input flex-1 p-0.5 rounded text-[9px]">
+                                </div>
+                            </div>
+                            <button v-if="eventChoices.length < 4" @click="eventChoices.push({label:'', toId:null, color:'#ffffff', returnToMain:false, setVar:'', reqVar:''})" class="border border-white/10 border-dashed rounded flex items-center justify-center text-slate-500 hover:text-white hover:border-indigo-500 transition h-[80px] font-bold text-xl">+</button>
+                        </div>
+                        <div class="flex gap-2">
+                            <button v-if="!isEditingEvent" @click="createEventClip" class="glass-btn bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 w-full py-1.5 rounded text-xs font-bold" :disabled="processingClip">{{ processingClip ? '⏳ Creating...' : '⚡ Generate Event' }}</button>
+                            
+                            <button v-if="isEditingEvent" @click="saveEventChanges" class="glass-btn flex-1 bg-green-600/20 hover:bg-green-600/40 text-green-300 py-1.5 rounded text-xs font-bold">💾 Save</button>
+                            <button v-if="isEditingEvent" @click="saveAndTestEvent" class="glass-btn flex-1 bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 py-1.5 rounded text-xs font-bold">▶ Test</button>
+                            <button v-if="isEditingEvent" @click="cancelEventEdit" class="glass-btn flex-1 bg-slate-600/20 hover:bg-slate-600/40 text-slate-300 py-1.5 rounded text-xs font-bold">Cancel</button>
+                        </div>
+                    </div>
+                    <div v-else class="text-center text-slate-500 text-xs py-4 italic">Running Test Simulation...</div>
+                </div>
+            </div>
+            
+            <div class="w-60 glass-panel flex flex-col overflow-hidden">
+                <div class="p-2 border-b border-white/5 flex-shrink-0 bg-black/20"><span class="font-bold text-white text-[10px] uppercase">Events</span></div>
+                <div class="flex-1 overflow-y-auto p-2 space-y-2">
+                    <div v-if="eventClips.length === 0" class="text-slate-500 text-[10px] text-center py-4">No events created.</div>
+                    <div v-for="c in eventClips" :key="c.id" class="flex flex-col gap-1 p-2 rounded-lg border border-indigo-500/30 bg-indigo-900/10 hover:bg-indigo-900/20 transition cursor-pointer group">
+                        <div class="flex justify-between items-start">
+                             <div class="font-bold text-indigo-200 text-[10px] truncate">{{ c.name }}</div>
+                             <div class="flex gap-1">
+                                 <button @click="editEvent(c)" class="text-[9px] bg-indigo-600/50 hover:bg-indigo-500 text-white px-1.5 py-0.5 rounded">✎</button>
+                                 <div class="text-[9px] text-slate-400 font-mono pt-0.5">{{ c.duration.toFixed(1) }}s</div>
+                             </div>
+                        </div>
+                        <div class="flex gap-1 mt-1">
+                             <button @click="testEventClip(c)" class="flex-1 bg-green-600/20 hover:bg-green-600 text-green-400 hover:text-white text-[9px] py-0.5 rounded border border-green-600/30">▶ Test</button>
+                             <button @click="copyToClipboard(c.unique_id)" class="px-1.5 bg-slate-700/50 hover:bg-slate-600 text-slate-300 text-[9px] rounded border border-white/10">ID</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div v-if="view === 'library'" class="flex-1 flex gap-2 p-2 overflow-hidden">
+            <div class="w-60 glass-panel flex flex-col overflow-hidden">
+                <div class="p-2 border-b border-white/5 flex-shrink-0 bg-black/20 flex justify-between items-center">
+                    <h3 class="font-bold text-white text-[10px] uppercase">All Clips</h3>
+                    <button @click="toggleSelectionMode" class="text-[9px] px-2 py-0.5 rounded border transition" 
+                            :class="selectionMode ? 'bg-blue-600 text-white border-blue-400' : 'bg-white/5 text-slate-400 border-white/10'">
+                        {{ selectionMode ? 'Cancel' : 'Select' }}
+                    </button>
+                </div>
+                
+                <div v-if="selectionMode && selectedClipIds.length > 0" class="p-2 bg-red-900/20 border-b border-red-500/30">
+                    <button @click="deleteSelectedClips" class="w-full py-1.5 bg-red-600 hover:bg-red-500 text-white text-[9px] font-bold rounded shadow-lg uppercase">
+                        🗑️ Delete ({{ selectedClipIds.length }})
+                    </button>
+                </div>
+
+                <div class="flex-1 overflow-y-auto p-2 space-y-1">
+                    <div v-for="c in clips" :key="c.id" 
+                         class="flex items-center gap-2 p-1.5 rounded-lg cursor-pointer transition border" 
+                         :class="getItemClass(c)"
+                         @click="handleClipClick(c)">
+                        
+                        <div v-if="selectionMode" class="mr-1">
+                            <input type="checkbox" :checked="selectedClipIds.includes(c.unique_id)" class="pointer-events-none w-3 h-3">
+                        </div>
+
+                        <div class="w-10 h-7 bg-black rounded overflow-hidden flex-shrink-0 border border-white/10">
+                            <img v-if="c.thumbnail" :src="c.thumbnail" class="w-full h-full object-cover">
+                        </div>
+                        <div class="flex-1 min-w-0">
+                            <div class="font-bold text-white text-[10px] truncate">{{ c.name }}</div>
+                            <div class="flex gap-1">
+                                <div v-if="c.is_event_clip === 1" class="text-[8px] text-indigo-400 uppercase font-bold">Event</div>
+                                <div v-if="c.is_game_over == 1" class="text-[8px] text-red-500 uppercase font-bold">💀 Death</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="flex-1 glass-panel p-4 flex flex-col min-h-0" v-if="librarySelectedClip && !selectionMode">
+                <div class="flex justify-between items-start mb-4 flex-shrink-0">
+                    <div class="flex-1 mr-4">
+                        <label class="text-[10px] text-slate-400 uppercase font-bold block mb-1">Clip Name</label>
+                        <div class="flex gap-2 mb-2"><input v-model="librarySelectedClip.name" class="glass-input w-full p-1.5 rounded text-xs"><button @click="saveClipDetails" class="glass-btn px-3 rounded text-[10px] font-bold">Save</button></div>
+                        <label class="flex items-center gap-2 cursor-pointer bg-red-900/20 p-2 rounded border border-red-500/30">
+                            <input type="checkbox" :checked="librarySelectedClip.is_game_over == 1" @change="e => librarySelectedClip.is_game_over = e.target.checked ? 1 : 0">
+                            <span class="text-xs font-bold text-red-400">💀 Game Over Scene</span>
+                        </label>
+                    </div>
+                    <div class="flex flex-col gap-2 items-end"><label class="text-[10px] text-slate-400 uppercase font-bold block">Actions</label><div class="flex gap-2"><button @click="captureThumbnail" class="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded text-xs font-bold shadow-lg">📸 Set Thumb</button><button @click="deleteClip(librarySelectedClip.unique_id); librarySelectedClip=null" class="bg-red-500/20 hover:bg-red-500/40 text-red-400 px-3 py-1.5 rounded text-xs border border-red-500/30">🗑️ Delete</button></div></div>
+                </div>
+                <div class="flex-1 bg-black/50 rounded-xl overflow-hidden relative border border-white/10 flex flex-col">
+                    <video ref="libraryPlayer" :src="librarySelectedClip.filepath" class="w-full h-full object-contain flex-1" controls></video>
+                </div>
+            </div>
+            <div v-else class="flex-1 glass-panel flex items-center justify-center text-slate-500">
+                {{ selectionMode ? 'Select clips from the left to delete them.' : 'Select a clip to edit details.' }}
+            </div>
+        </div>
+
+        <div v-if="view === 'variables'" class="flex-1 flex flex-col items-center p-6 overflow-y-auto">
+            <div class="glass-panel p-6 max-w-4xl w-full">
+                <h2 class="text-2xl font-bold text-white mb-6">Game Variables</h2>
+                
+                <div class="flex gap-2 mb-6 items-end">
+                    <div class="flex-1">
+                        <label class="text-xs font-bold text-slate-400 uppercase block mb-1">Variable Name</label>
+                        <input v-model="newVarName" placeholder="e.g. has_key, trust_level" class="glass-input w-full p-2 rounded">
+                    </div>
+                    <div class="w-32">
+                        <label class="text-xs font-bold text-slate-400 uppercase block mb-1">Initial (0/1)</label>
+                        <input type="number" v-model="newVarVal" class="glass-input w-full p-2 rounded">
+                    </div>
+                    <button @click="addVariable" class="glass-btn h-10 px-4 rounded font-bold bg-green-600/20 text-green-400 border-green-500/30">Save Variable</button>
+                </div>
+
+                <div class="space-y-2">
+                    <div v-if="variables.length === 0" class="text-center text-slate-500 py-4">No variables defined yet.</div>
+                    <div v-for="v in variables" :key="v.id" class="flex items-center gap-4 bg-black/20 p-3 rounded border border-white/5">
+                        <div class="flex-1 font-mono text-blue-300 font-bold">{{ v.name }}</div>
+                        <div class="text-slate-400 text-sm">Starts as: <span class="text-white font-bold">{{ v.initial_value }}</span></div>
+                        <button @click="deleteVariable(v.id)" class="text-red-500 hover:text-red-400 text-xs uppercase font-bold">Delete</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div v-if="view === 'logic'" class="flex-1 flex gap-2 p-2 overflow-hidden">
+            
+            <div v-if="isGraphMode" class="flex-1 flex flex-col glass-panel overflow-hidden relative">
+                <div class="absolute top-2 left-2 z-50 flex gap-2">
+                    <button @click="isGraphMode=false" class="glass-btn px-3 py-1 rounded font-bold text-[10px] bg-black/80 backdrop-blur">← Timeline</button>
+                    <div class="px-3 py-1 rounded bg-blue-600/20 text-blue-300 text-[10px] font-bold border border-blue-500/30 backdrop-blur">Map: {{ getClipName(logicSourceId) }}</div>
+                    <button @click="saveNodePositions" class="glass-btn px-3 py-1 rounded font-bold text-[10px] text-green-400 border-green-500/30 hover:bg-green-600/20 bg-black/80">💾 Save</button>
+                    <button @click="autoLayout" class="glass-btn px-3 py-1 rounded font-bold text-[10px] text-yellow-400 border-yellow-500/30 hover:bg-yellow-600/20 bg-black/80">✨ Auto</button>
+                </div>
+                
+                <div class="node-graph-grid w-full h-full" ref="graphContainer" @mousedown="startPan" @mousemove="onGraphMouseMove" @mouseup="endPan" @wheel="zoomGraph">
+                    <div class="transform-layer absolute top-0 left-0 w-full h-full origin-top-left" :style="{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }">
+                        <svg class="connections overflow-visible">
+                            <defs>
+                                <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#f97316" /></marker>
+                                <marker id="arrowhead-blue" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#3b82f6" /></marker>
+                            </defs>
+                            
+                            <g v-for="edge in displayedGraphEdges" :key="edge.id">
+                                <path :d="edge.path" class="connection-line" 
+                                      :class="{'is-return': edge.isReturn, 'is-sequence': edge.isSequence}" 
+                                      :marker-end="edge.isSequence ? 'url(#arrowhead-blue)' : 'url(#arrowhead)'"
+                                      @contextmenu.prevent="deleteEdge(edge.id)" />
+                            </g>
+
+                            <path v-if="tempLine" 
+                                  :d="`M ${tempLine.x1} ${tempLine.y1} C ${(tempLine.x1+tempLine.x2)/2} ${tempLine.y1}, ${(tempLine.x1+tempLine.x2)/2} ${tempLine.y2}, ${tempLine.x2} ${tempLine.y2}`" 
+                                  stroke="#3b82f6" stroke-width="3" fill="none" stroke-dasharray="5" />
+                        </svg>
+                        
+                        <div v-for="edge in displayedGraphEdges" :key="'lbl-'+edge.id" class="edge-label" :class="{'seq-label': edge.isSequence}" :style="{left: edge.midX + 'px', top: edge.midY + 'px'}">
+                            {{ edge.label }}<span v-if="edge.isReturn" class="text-red-400 ml-1">↩</span>
+                        </div>
+
+                        <div v-for="node in displayedGraphNodes" :key="node.id" class="graph-node" 
+                             :class="{ 'is-source': node.unique_id === logicSourceId, 'is-target': node.unique_id !== logicSourceId, 'is-game-over': node.is_game_over == 1 }" 
+                             :style="{ left: node.x + 'px', top: node.y + 'px' }" 
+                             @mousedown.stop="startDragNode($event, node)" 
+                             @mouseup="completeConnectionDrag(node)"
+                             @dblclick="selectNode(node)">
+                            
+                            <img v-if="node.thumbnail" :src="node.thumbnail" class="node-thumb"><div v-else class="node-thumb flex items-center justify-center bg-slate-800 text-slate-500 text-xs">No Thumb</div>
+                            
+                            <div v-if="node.is_game_over == 1" class="absolute top-1 right-1 text-lg z-20">💀</div>
+                            
+                            <div class="play-icon text-white">▶</div>
+                            <div class="node-footer"><div class="node-title">{{ node.name }}</div></div>
+                            
+                            <div class="node-port" @mousedown.stop.prevent="startConnectionDrag($event, node)"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div v-else class="flex-1 flex flex-col glass-panel overflow-hidden">
+                <div class="p-2 border-b border-white/5 flex gap-2 items-center flex-shrink-0 bg-black/20">
+                    <button @click="openGraph" class="glass-btn px-3 py-1.5 rounded font-bold text-[10px] bg-indigo-600/20 text-indigo-300 hover:bg-indigo-600/40">🔀 Graph View</button>
+                    <select v-model="logicSourceId" @change="loadLogicSource" class="glass-input rounded px-2 py-1 text-xs flex-1"><option :value="null">-- Select Main Video --</option><optgroup label="Full"><option v-for="c in masterClips" :value="c.unique_id">{{ c.name.replace('FULL: ', '') }}</option></optgroup><optgroup label="Events"><option v-for="c in eventClips" :value="c.unique_id">⚡ {{ c.name }}</option></optgroup><optgroup label="Clips"><option v-for="c in subClips" :value="c.unique_id">{{ c.name }}</option></optgroup></select>
+                    <div class="flex items-center gap-1">
+                        <button @click="smartSkipEnabled = !smartSkipEnabled" class="text-[9px] font-bold px-2 py-1 rounded transition border border-white/10" :class="smartSkipEnabled ? 'bg-purple-600 text-white shadow-purple-500/50 shadow-sm' : 'glass-input text-slate-400'">🧠 Smart Skip</button>
+                        <button @click="toggleTestMode" class="text-[9px] font-bold px-2 py-1 rounded transition border border-white/10" :class="isTestMode ? 'bg-green-600 text-white' : 'glass-input text-slate-400'">{{ isTestMode ? 'LIVE SIM' : 'EDITOR' }}</button>
+                    </div>
+                </div>
+
+                <div class="px-2 py-1.5 bg-black/20 flex gap-2 items-center justify-between border-b border-white/5 flex-shrink-0" v-if="logicSourceId">
+                    <div class="flex gap-2 items-center flex-1">
+                        <span class="text-[10px] font-bold text-purple-400">🎵 Audio:</span>
+                        <select v-model="logicBgMusic" @change="playPreviewMusic(logicBgMusic)" class="glass-input text-[10px] p-1 rounded w-32"><option :value="null">-- None --</option><option v-for="a in audioFiles" :value="a.path">{{ a.name }}</option></select>
+                        
+                        <div v-if="logicBgMusic" class="equalizer"><div class="bar"></div><div class="bar"></div><div class="bar"></div></div>
+                        
+                        <input type="file" ref="audioInput" class="hidden" accept="audio/*" @change="uploadAudio"><button @click="$refs.audioInput.click()" class="text-[9px] bg-white/10 hover:bg-white/20 px-1.5 py-0.5 rounded text-white">+ Up</button>
+                        <label class="flex items-center gap-1 text-[9px] text-slate-400 cursor-pointer ml-2"><input type="checkbox" v-model="logicMuteVideo" class="accent-red-500"> Mute Vid</label>
+                    </div>
+                    <button @click="saveLogicBlock" class="text-[10px] text-blue-400 hover:text-white border border-blue-500/30 px-2 py-0.5 rounded">Save Set</button>
+                </div>
+                <audio ref="bgmPreview" loop></audio>
+
+                <div class="flex-1 relative bg-black flex items-center justify-center overflow-hidden min-h-0">
+                    <video v-if="logicSourceClip" ref="logicPlayer" :src="logicSourceClip.filepath" @timeupdate="updateLogicProgress" class="w-full h-full object-contain" controls></video>
+                    <div v-else class="text-slate-600"><h3 class="text-xl font-bold">Select Scene</h3></div>
+                    
+                    <div v-if="showLogicOverlay" class="absolute inset-0 bg-black/80 backdrop-blur-sm flex flex-col justify-end pb-8 z-10 animate-fade-in">
+                        <h2 class="text-center text-2xl font-bold text-white mb-4 drop-shadow-md">Make Your Choice</h2>
+                        <div class="flex flex-wrap gap-4 justify-center px-4">
+                            <div v-for="(opt, idx) in currentEditingBlock.choices" :key="idx" @click="handleOptionClick(opt)" 
+                                 class="choice-card-overlay glass-panel w-40 h-24 relative group overflow-hidden choice-enter-active" 
+                                 :style="{ animationDelay: idx * 100 + 'ms' }">
+                                <img v-if="getClipThumb(opt.toId)" :src="getClipThumb(opt.toId)" class="absolute inset-0 w-full h-full object-cover opacity-80 group-hover:opacity-100 transition duration-300">
+                                <div class="absolute bottom-0 left-0 w-full p-1.5 text-center font-bold text-xs tracking-wide bg-black/60 backdrop-blur-sm" :style="{color: opt.color}">{{ opt.label || 'Option '+(idx+1) }}</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div v-if="isTestMode && isPlayingSubClip" class="absolute top-4 right-4 z-50"><button @click="finishSubClip" class="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded-full font-bold shadow-lg flex items-center gap-1 text-xs border border-blue-400">⏭️ Return</button></div>
+                </div>
+
+                <div class="bg-black/30 p-2 border-t border-white/5 h-[240px] flex-shrink-0 overflow-y-auto">
+                    <div v-if="logicSourceId && !isTestMode">
+                        <div class="mb-2 glass-panel p-2">
+                            <div class="flex justify-between text-[9px] text-slate-400 mb-0.5"><span>TIMELINE (Zoom: {{ zoomLevel }}%)</span><span>{{ formatDuration(logicCurrentTime) }}</span></div>
+                            <input type="range" min="100" max="500" v-model="zoomLevel" class="w-full mb-1 h-1 accent-slate-500">
+                            
+                            <div class="overflow-x-auto">
+                                <div class="timeline-container" :style="{width: zoomLevel + '%'}" @click="jumpTime">
+                                    <div class="timeline-playhead" :style="{left: logicPlayheadPercent + '%'}"></div>
+                                    <div v-for="(seg, idx) in seenSegments" :key="'seen-'+idx" class="seen-segment" 
+                                         :style="{left: (seg.start/logicSourceClip.duration*100) + '%', width: ((seg.end-seg.start)/logicSourceClip.duration*100) + '%'}" 
+                                         title="Already Watched (Smart Skip)">
+                                    </div>
+                                    <div v-for="block in existingLogicBlocks" :key="block.id" class="marker-trigger" 
+                                         :style="{left: (block.triggerTime/logicSourceClip.duration*100) + '%'}" 
+                                         :title="block.choices.length + ' choices'">
+                                    </div>
+                                </div>
+                                <div class="timeline-usage-track" :style="{width: zoomLevel + '%'}">
+                                    <div v-for="(seg, idx) in logicUsageSegments" :key="'logic-used-'+idx" 
+                                         class="usage-marker" 
+                                         :style="{left: seg.left+'%', width: seg.width+'%'}" 
+                                         :title="'Existing Clip: ' + seg.name">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="flex justify-center mt-1"><button @click="createNewBlockAtCurrentTime" class="glass-btn px-2 py-0.5 rounded text-[10px] font-bold">+ Add Choice</button></div>
+                        </div>
+                        <div v-if="currentEditingBlock" class="glass-panel p-2 animate-fade-in">
+                            <div class="flex justify-between items-center mb-2 border-b border-white/5 pb-1">
+                                <h3 class="font-bold text-white text-xs">Choices at <span class="text-blue-400">{{ formatDuration(currentEditingBlock.triggerTime) }}</span></h3>
+                                <button @click="deleteLogicBlock" class="text-red-500 text-[10px] hover:text-white px-1">Delete</button>
+                            </div>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-2 mb-2">
+                                <div v-for="(opt, idx) in currentEditingBlock.choices" :key="idx" class="bg-black/40 p-2 rounded border border-white/10">
+                                    <div class="flex gap-1 mb-1 items-center"><input type="color" v-model="opt.color" class="bg-transparent border-none h-4 w-4 cursor-pointer p-0"><input v-model="opt.label" class="glass-input w-full p-0.5 rounded text-[10px]" placeholder="Label"></div>
+                                    <div class="flex gap-1"><div class="w-8 h-6 bg-black rounded flex-shrink-0 relative overflow-hidden"><img v-if="getClipThumb(opt.toId)" :src="getClipThumb(opt.toId)" class="w-full h-full object-cover"></div><select v-model="opt.toId" class="glass-input flex-1 p-0.5 rounded text-[9px]"><option :value="null">Target...</option><optgroup label="Events"><option v-for="c in eventClips" :value="c.unique_id">⚡ {{ c.name }}</option></optgroup><optgroup label="Clips"><option v-for="c in subClips" :value="c.unique_id">{{ c.name }}</option></optgroup></select></div>
+                                    <div class="flex items-center gap-1 mt-1">
+                                        <label class="text-[8px] text-yellow-400 flex items-center gap-0.5 cursor-pointer"><input type="checkbox" v-model="opt.return"> Ret</label>
+                                    </div>
+                                    <div class="grid grid-cols-2 gap-1 mt-1">
+                                        <div><label class="text-[8px] text-green-400 uppercase">Set</label><input v-model="opt.setVar" list="varOptions" class="glass-input w-full p-0.5 rounded text-[9px]"></div>
+                                        <div><label class="text-[8px] text-red-400 uppercase">Req</label><input v-model="opt.reqVar" list="varOptions" class="glass-input w-full p-0.5 rounded text-[9px]"></div>
+                                    </div>
+                                </div>
+                                <div class="flex items-center justify-center border border-white/10 rounded border-dashed cursor-pointer hover:border-blue-500 min-h-[100px]" @click="addOption" v-if="currentEditingBlock.choices.length < 4"><span class="text-xl text-slate-600">+</span></div>
+                            </div>
+                            <div class="flex justify-end gap-1"><button @click="currentEditingBlock=null; showLogicOverlay=false" class="text-slate-400 text-[10px] px-2 py-1 hover:text-white">Cancel</button><button @click="saveLogicBlock" class="glass-btn px-4 py-1 rounded font-bold text-[10px]">Save All</button></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div v-if="!isGraphMode" class="w-60 glass-panel flex flex-col overflow-hidden">
+                <div class="p-2 border-b border-white/5 flex-shrink-0 bg-black/20"><h3 class="font-bold text-white text-[10px] uppercase">Events</h3></div>
+                <div class="flex-1 overflow-y-auto p-2 space-y-1">
+                    <div v-for="block in existingLogicBlocks" :key="block.id" class="p-2 rounded-lg border border-white/5 hover:border-blue-500 cursor-pointer transition flex justify-between items-center group bg-black/20" @click="editBlock(block)">
+                        <div><div class="text-blue-400 font-bold font-mono text-[10px] group-hover:text-white">{{ formatDuration(block.triggerTime) }}</div><div class="text-[9px] text-slate-400">{{ block.choices.length }} Choices</div></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div v-if="view === 'stats'" class="flex-1 flex flex-col items-center justify-center p-4 overflow-y-auto">
+            <div class="glass-panel p-6 max-w-3xl w-full">
+                <h2 class="text-2xl font-bold text-white mb-4 text-center">Project Analytics</h2>
+                <div v-if="statsData.length === 0" class="text-center text-slate-500 py-6">No data collected yet.</div>
+                <div v-else class="space-y-3">
+                    <div v-for="(stat, idx) in statsData" :key="idx" class="bg-black/30 p-3 rounded-xl border border-white/5 flex items-center gap-3">
+                        <div class="text-lg font-bold text-blue-500 w-8">#{{idx+1}}</div>
+                        <div class="flex-1">
+                            <div class="text-white font-bold text-sm">{{ stat.choice_label }}</div>
+                            <div class="w-full bg-slate-800 h-1.5 rounded-full mt-1 overflow-hidden"><div class="bg-blue-500 h-full" :style="{width: (stat.count / maxStatCount * 100) + '%'}"></div></div>
+                        </div>
+                        <div class="text-lg font-bold text-white">{{ stat.count }} <span class="text-[9px] text-slate-500">clicks</span></div>
+                    </div>
+                </div>
+                <div class="mt-4 flex gap-3 justify-center">
+                    <button @click="fetchStats" class="text-blue-400 hover:text-white text-xs">↻ Refresh</button>
+                    <button @click="resetStats" class="text-red-400 hover:text-white text-xs">🗑️ Reset</button>
+                </div>
+            </div>
+        </div>
+
+        <div v-if="view === 'publish'" class="flex-1 flex flex-col items-center justify-center p-4 overflow-y-auto">
+            <div class="glass-panel p-4 max-w-5xl w-full flex flex-col h-full">
+                <div class="flex justify-between items-center mb-2 flex-shrink-0">
+                    <h2 class="text-xl font-bold text-white">Final Build</h2>
+                    <div class="flex gap-2">
+                        <button @click="isPublishGraphMode=false" class="glass-btn px-3 py-1 rounded font-bold text-[10px]" :class="!isPublishGraphMode ? 'bg-blue-600 text-white' : ''">List</button>
+                        <button @click="openPublishGraph" class="glass-btn px-3 py-1 rounded font-bold text-[10px]" :class="isPublishGraphMode ? 'bg-blue-600 text-white' : ''">Map</button>
+                    </div>
+                </div>
+                
+                <div class="mb-2 flex justify-center gap-2 items-center bg-black/20 p-2 rounded-lg flex-shrink-0">
+                    <label class="text-xs font-bold text-slate-400">Theme:</label><input type="color" v-model="projectColor" @change="saveSettings" class="bg-transparent border-none h-6 w-6 cursor-pointer">
+                    <div class="flex-1 text-right"><input v-model="publishTitle" class="glass-input px-3 py-1 rounded text-xs w-64" placeholder="Movie Title"></div>
+                </div>
+                
+                <div v-if="isPublishGraphMode" class="flex-1 min-h-0 relative mb-2 border border-white/10 rounded-xl overflow-hidden">
+                    <div class="absolute top-2 left-2 z-50 flex gap-2">
+                        <button @click="saveNodePositions" class="glass-btn px-3 py-1 rounded font-bold text-[10px] text-green-400 border-green-500/30 bg-black/80">💾 Save</button>
+                        <button @click="autoLayout" class="glass-btn px-3 py-1 rounded font-bold text-[10px] text-yellow-400 border-yellow-500/30 bg-black/80">✨ Auto</button>
+                    </div>
+                    <div class="node-graph-grid w-full h-full" @mousedown="startPan" @mousemove="onGraphMouseMove" @mouseup="endPan" @wheel="zoomGraph">
+                        <div class="transform-layer absolute top-0 left-0 w-full h-full origin-top-left" :style="{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }">
+                            <svg class="connections overflow-visible">
+                                <defs>
+                                    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#f97316" /></marker>
+                                    <marker id="arrowhead-blue" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#3b82f6" /></marker>
+                                </defs>
+                                <g v-for="edge in displayedGraphEdges" :key="edge.id"><path :d="edge.path" class="connection-line" :class="{'is-return': edge.isReturn, 'is-sequence': edge.isSequence}" :marker-end="edge.isSequence ? 'url(#arrowhead-blue)' : 'url(#arrowhead)'" /></g>
+                            </svg>
+                            
+                            <div v-for="edge in displayedGraphEdges" :key="'lbl-'+edge.id" class="edge-label" :class="{'seq-label': edge.isSequence}" :style="{left: edge.midX + 'px', top: edge.midY + 'px'}">
+                                {{ edge.label }}<span v-if="edge.isReturn" class="text-red-400 ml-1">↩</span>
+                            </div>
+                            
+                            <div v-for="node in displayedGraphNodes" :key="node.id" class="graph-node" 
+                                 :class="{ 'is-source': node.unique_id === logicSourceId, 'is-sequence': storySequence.some(s=>s.id===node.unique_id), 'is-game-over': node.is_game_over == 1 }" 
+                                 :style="{ left: node.x + 'px', top: node.y + 'px' }" 
+                                 @mousedown.stop="startDragNode($event, node)">
+                                
+                                <img v-if="node.thumbnail" :src="node.thumbnail" class="node-thumb">
+                                <div v-else class="node-thumb flex items-center justify-center bg-slate-800 text-slate-500 text-xs">No Thumb</div>
+                                
+                                <div v-if="node.is_game_over == 1" class="absolute top-1 right-1 text-lg z-20">💀</div>
+                                
+                                <div v-if="storySequence.findIndex(s=>s.id===node.unique_id) !== -1" class="seq-badge">#{{ storySequence.findIndex(s=>s.id===node.unique_id) + 1 }}</div>
+                                <div class="node-footer"><div class="node-title">{{ node.name }}</div></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div v-else class="grid grid-cols-2 gap-4 mb-2 flex-1 min-h-0">
+                    <div class="glass-panel p-2 flex flex-col h-full">
+                        <div class="flex justify-between items-center mb-1 flex-shrink-0">
+                            <h3 class="text-slate-400 text-[10px] font-bold uppercase">Interactive Scenes</h3>
+                        </div>
+                        <div class="flex-1 overflow-y-auto space-y-1 pr-1">
+                            <div v-if="filteredPublishClips.length === 0" class="text-slate-500 text-[10px] text-center py-4">No scenes match filter</div>
+                            <div v-for="c in filteredPublishClips" :key="c.unique_id" class="flex items-center gap-2 p-1.5 rounded-lg border border-white/5 hover:bg-white/5 cursor-pointer transition" :class="c.is_event_clip === 1 ? 'bg-indigo-900/10 border-indigo-500/30' : ''" @click="addToSequence(c)">
+                                <div class="w-8 h-5 rounded overflow-hidden flex-shrink-0 border" :class="c.is_event_clip === 1 ? 'border-indigo-500' : 'border-transparent'"><img :src="c.thumbnail" class="w-full h-full object-cover"></div>
+                                <div class="flex-1 min-w-0">
+                                    <div class="font-bold text-white text-[10px] truncate">{{ c.name }}</div>
+                                    <div v-if="c.is_event_clip === 1" class="text-[8px] text-indigo-400 font-bold tracking-wider">⚡ Event</div>
+                                    <div v-if="c.is_game_over == 1" class="text-[8px] text-red-500 font-bold tracking-wider">💀 Death</div>
+                                </div>
+                                <div class="text-green-400 text-base">+</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="glass-panel p-2 flex flex-col h-full border border-blue-500/30">
+                        <h3 class="text-blue-400 text-[10px] font-bold uppercase mb-1 flex-shrink-0">Sequence</h3>
+                        <div v-if="storySequence.length === 0" class="flex-1 flex items-center justify-center text-slate-500 text-[10px]">Add scenes from left.</div>
+                        <div v-else class="flex-1 overflow-y-auto space-y-1 pr-1">
+                            <div v-for="(item, idx) in storySequence" :key="idx" 
+                                 class="flex items-center gap-2 p-1.5 rounded-lg bg-blue-900/20 border border-blue-500/30 seq-item"
+                                 :class="{ 'dragging': draggedSeqIndex === idx }"
+                                 draggable="true"
+                                 @dragstart="onSeqDragStart($event, idx)"
+                                 @dragover.prevent
+                                 @drop="onSeqDrop($event, idx)">
+                                 
+                                <div class="w-4 h-4 rounded-full bg-blue-500 text-white flex items-center justify-center text-[9px] font-bold flex-shrink-0 cursor-move">☰</div>
+                                <div class="flex-1 text-[10px] text-white truncate min-w-0">{{ item.name }}</div>
+                                <div class="flex gap-1 flex-shrink-0">
+                                    <button @click="removeFromSequence(idx)" class="text-red-400 hover:text-white px-1 text-[10px]">✕</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="flex-shrink-0 flex gap-2 items-start">
+                    <div class="flex-1 flex flex-col gap-1">
+                         <div class="flex gap-2">
+                             <button @click="startPreview" class="glass-btn flex-1 bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-400 py-2 rounded-lg font-bold text-sm border border-indigo-500/30">▶ Preview</button>
+                             <button @click="publishProject" class="glass-btn flex-1 bg-green-600/20 hover:bg-green-600/40 text-green-400 py-2 rounded-lg font-bold text-sm" :disabled="publishing || storySequence.length===0">{{ publishing ? 'Building...' : '🚀 Build & Publish' }}</button>
+                          </div>
+                        <div v-if="publishUrl" class="p-2 bg-green-900/20 border border-green-500/30 rounded-lg text-center"><div class="text-green-400 font-bold mb-0.5 text-xs">✅ Build Complete!</div><a :href="publishUrl" target="_blank" class="text-white underline hover:text-green-300 text-xs">Open Movie</a></div>
+                    </div>
+                    
+                    <div class="w-48 glass-panel p-2 h-24 overflow-y-auto">
+                        <h4 class="text-[9px] font-bold text-slate-500 uppercase mb-1">History</h4>
+                        <div v-if="exportsList.length===0" class="text-[9px] text-slate-600">No builds yet.</div>
+                        <div v-for="exp in exportsList" :key="exp.name" class="flex justify-between items-center mb-0.5 group">
+                            <a :href="exp.url" target="_blank" class="text-[10px] text-blue-400 hover:text-white truncate flex-1">{{ exp.name }}</a>
+                            <button @click="deleteExport(exp.name)" class="text-[9px] text-red-500 opacity-0 group-hover:opacity-100 px-1">Del</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div v-if="previewMode" class="preview-overlay animate-fade-in" v-cloak>
+             <div class="absolute top-4 right-4 z-50 flex gap-4">
+                 <div class="bg-black/50 px-3 py-1 rounded-full text-xs text-slate-400 border border-white/10 backdrop-blur-md">Simulating: {{ publishTitle }}</div>
+                 
+                 <button @click="showDebugPanel = !showDebugPanel" class="bg-blue-900/80 hover:bg-blue-700 text-white font-bold py-1 px-3 rounded-full shadow-lg backdrop-blur-md text-xs border border-blue-500/30">🐞 Debug</button>
+                 
+                 <button @click="closePreview" class="bg-red-600/80 hover:bg-red-500 text-white font-bold py-1 px-4 rounded-full shadow-lg transition transform hover:scale-105 backdrop-blur-md text-xs">✕ Close</button>
+             </div>
+             
+             <div v-if="showDebugPanel" class="absolute top-16 right-4 z-50 bg-black/80 backdrop-blur-md p-4 rounded-xl border border-white/20 w-64 text-xs font-mono shadow-2xl">
+                 <h4 class="text-blue-400 font-bold mb-2 uppercase">Live Variables</h4>
+                 <div v-if="Object.keys(previewGameState).length === 0" class="text-slate-500 italic">No variables tracked.</div>
+                 <div v-for="(val, key) in previewGameState" :key="key" class="flex justify-between items-center mb-1 border-b border-white/5 pb-1">
+                     <span class="text-slate-300">{{ key }}</span>
+                     <span :class="val ? 'text-green-400' : 'text-red-400'" class="font-bold">{{ val ? 'TRUE' : 'FALSE' }}</span>
+                 </div>
+             </div>
+
+             <div class="flex-1 relative flex items-center justify-center bg-black overflow-hidden video-hover-zone">
+                 <video ref="previewPlayer" class="max-w-full max-h-full object-contain" @timeupdate="onPreviewTimeUpdate" @ended="onPreviewEnded" @click="togglePreviewPlay" @durationchange="onPreviewDurationChange" playsinline webkit-playsinline></video>
+                 <audio ref="previewBgm" loop></audio>
+                 
+                 <div v-if="previewIsGameOver" class="absolute inset-0 bg-black/90 flex flex-col items-center justify-center z-50 backdrop-blur-sm animate-fade-in">
+                     <h1 class="glitch mb-6">GAME OVER</h1>
+                     <button @click="previewRestartFromFail" class="px-8 py-3 bg-white text-black font-bold rounded-full hover:scale-105 transition text-lg shadow-[0_0_20px_rgba(255,255,255,0.3)]">🔄 Try Again</button>
+                 </div>
+
+                 <div class="controls-bar" v-if="!previewShowChoices && !previewIsGameOver">
+                     <button @click="togglePreviewPlay" class="text-xl w-6 hover:text-blue-400 transition">{{ previewIsPaused ? '▶' : '⏸' }}</button>
+                     
+                     <div class="preview-timeline-track" @click="seekPreview">
+                         <div v-for="(rng, i) in previewSkipVisuals" :key="'p-skip-'+i"
+                              class="timeline-skip-zone"
+                              :style="{ left: rng.left + '%', width: rng.width + '%' }"
+                              title="Smart Skip">
+                         </div>
+
+                         <div class="preview-timeline-fill" :style="{width: previewProgress+'%'}"></div>
+                         <div class="preview-thumb-knob" :style="{left: previewProgress+'%'}"></div>
+                         
+                         <div v-for="(seg, idx) in seenSegments" :key="'pseen-'+idx" class="seen-segment" 
+                              :style="{left: (seg.start/previewDuration*100) + '%', width: ((seg.end-seg.start)/previewDuration*100) + '%'}" 
+                              title="Skipped Segment">
+                         </div>
+
+                         <div v-for="m in previewMarkers" class="timeline-logic-marker" :style="{left: m.pct+'%'}" :title="m.count+' choices'"></div>
+                     </div>
+                     
+                     <div class="text-[10px] font-mono text-slate-300 w-20 text-right">
+                        {{ formatTime(previewCurrentTime) }} / {{ formatTime(previewDuration) }}
+                     </div>
+                     
+                     <div class="flex items-center gap-1">
+                         <button @click="smartSkipEnabled = !smartSkipEnabled" class="text-[9px] font-bold px-2 py-0.5 rounded transition border border-white/10 ml-2" :class="smartSkipEnabled ? 'bg-purple-600 text-white' : 'bg-white/5 text-slate-400'">🧠 Skip</button>
+                         <span class="text-[10px] ml-1">🔊</span>
+                         <input type="range" min="0" max="1" step="0.1" v-model="previewVolume" @input="updatePreviewVolume" class="vol-slider">
+                     </div>
+                 </div>
+
+                 <div v-if="previewShowChoices" class="absolute inset-0 bg-black/70 backdrop-blur-sm flex flex-col justify-center items-center z-50 animate-fade-in">
+                     <h1 class="text-3xl font-bold mb-8 text-white drop-shadow-[0_0_15px_rgba(255,255,255,0.3)]">Make Your Choice</h1>
+                     <div class="flex flex-wrap gap-6 justify-center px-10">
+                         <div v-for="(ch, idx) in previewCurrentChoices" @click="makePreviewChoice(ch)" 
+                              class="preview-card w-64 h-36 md:w-80 md:h-44 group rounded-xl border-2 choice-enter-active" 
+                              :class="{locked: isPreviewLocked(ch)}" 
+                              :style="{borderColor: ch.color || 'rgba(255,255,255,0.2)', animationDelay: idx * 100 + 'ms', boxShadow: '0 0 15px ' + (ch.color || 'transparent')}">
+                             
+                             <div class="absolute inset-0 bg-gray-900">
+                                 <img v-if="getClipThumb(ch.to)" :src="getClipThumb(ch.to)" class="absolute inset-0 w-full h-full object-cover opacity-80 group-hover:opacity-100 transition duration-500 scale-100 group-hover:scale-110">
+                             </div>
+
+                             <div class="absolute bottom-0 left-0 w-full p-3 text-center font-bold text-lg tracking-wide bg-gradient-to-t from-black via-black/80 to-transparent pt-8" :style="{color: ch.color || '#fff'}">{{ch.label}}</div>
+                             <div v-if="isPreviewLocked(ch)" class="absolute inset-0 flex items-center justify-center bg-black/70 backdrop-blur-sm"><span class="text-4xl">🔒</span></div>
+                         </div>
+                     </div>
+                 </div>
+             </div>
+        </div>
+
+    </div> 
+
+    <transition name="toast"><div v-if="toast.show" class="fixed bottom-10 right-10 px-4 py-3 rounded-xl shadow-2xl z-50 flex items-center gap-2" :class="toast.type === 'error' ? 'bg-red-600' : 'bg-green-600'"><span class="text-xl">{{ toast.type === 'error' ? '⚠️' : '✅' }}</span><div class="text-white font-bold text-sm">{{ toast.msg }}</div></div></transition>
+
+</div>
+
+<script src="js/app.js"></script>
+</body>
+</html>
