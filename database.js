@@ -1,12 +1,17 @@
 const sqlite3 = require('sqlite3').verbose();
 const { open } = require('sqlite');
+const path = require('node:path');
 
 let dbInstance = null;
+
+function resolveDatabasePath(value = process.env.DATABASE_PATH) {
+    return path.resolve(value || path.join(__dirname, 'database.sqlite'));
+}
 
 async function initDB() {
     if (dbInstance) return dbInstance;
 
-    dbInstance = await open({ filename: './database.sqlite', driver: sqlite3.Database });
+    dbInstance = await open({ filename: resolveDatabasePath(), driver: sqlite3.Database });
 
     // --- 1. CORE TABLES ---
     await dbInstance.exec(`CREATE TABLE IF NOT EXISTS projects (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, theme_color TEXT DEFAULT '#3b82f6', created_at DATETIME DEFAULT CURRENT_TIMESTAMP);`);
@@ -43,8 +48,12 @@ async function initDB() {
         `ALTER TABLE edges ADD COLUMN y REAL DEFAULT 50`
     ];
     
-    for (let m of migrations) { 
-        try { await dbInstance.exec(m); } catch (e) {} 
+    for (const migration of migrations) {
+        try {
+            await dbInstance.exec(migration);
+        } catch (error) {
+            if (!/duplicate column name/i.test(error.message || '')) throw error;
+        }
     }
 
     const proj = await dbInstance.get('SELECT * FROM projects');
@@ -59,4 +68,4 @@ function getDB() {
     return dbInstance;
 }
 
-module.exports = { initDB, getDB };
+module.exports = { initDB, getDB, resolveDatabasePath };

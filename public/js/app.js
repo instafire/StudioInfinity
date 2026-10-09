@@ -303,7 +303,7 @@ createApp({
             await fetch('/api/variable/delete', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ id })
+                body: JSON.stringify({ id, projectId: this.currentProject.id })
             });
             this.fetchVariables();
         },
@@ -312,7 +312,7 @@ createApp({
         handleFileSelect(e) { this.selectedFile = e.target.files[0]; },
         async uploadVideo() { if(!this.selectedFile) return; this.uploading = true; const fd = new FormData(); fd.append('file', this.selectedFile); fd.append('projectId', this.currentProject.id); try { await fetch('/api/upload', {method:'POST', body:fd}); this.showToast("Imported!"); this.refreshData(); this.view='clipper'; } catch(e){ this.showToast("Error", 'error'); } this.uploading = false; },
         async uploadAudio(e) { const file = e.target.files[0]; if (!file) return; const fd = new FormData(); fd.append('file', file); fd.append('projectId', this.currentProject.id); try { const res = await fetch('/api/upload', {method: 'POST', body: fd}); const data = await res.json(); if(data.success && data.type === 'audio') { this.showToast("Audio Uploaded!"); await this.refreshData(); this.logicBgMusic = data.path; this.playPreviewMusic(data.path); } } catch(err) { this.showToast("Upload Error", 'error'); } },
-        async deleteVideo() { if(confirm("Delete video?")) { await fetch('/api/delete_video', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id:this.selectedVidId})}); this.selectedVidId=null; this.videoUrl=''; this.refreshData(); this.showToast("Deleted"); } },
+        async deleteVideo() { if(confirm("Delete video?")) { await fetch('/api/delete_video', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id:this.selectedVidId, projectId:this.currentProject.id})}); this.selectedVidId=null; this.videoUrl=''; this.refreshData(); this.showToast("Deleted"); } },
         
         // --- CLIPPER ---
         loadVideo() { 
@@ -414,18 +414,18 @@ createApp({
         async deleteSelectedClips() {
             if (!confirm(`Permanently delete ${this.selectedClipIds.length} clips?`)) return;
             try {
-                const res = await fetch('/api/delete_clips_bulk', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: this.selectedClipIds }) });
+                const res = await fetch('/api/delete_clips_bulk', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId: this.currentProject.id, ids: this.selectedClipIds }) });
                 const data = await res.json();
                 if (data.success) { this.showToast(`Successfully deleted ${data.count} items`); this.selectedClipIds = []; this.selectionMode = false; this.refreshData(); }
             } catch (e) { this.showToast("Bulk delete failed", "error"); }
         },
-        async deleteClip(uid) { if(confirm("Delete clip?")) { await fetch('/api/delete_clip', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({unique_id:uid})}); this.refreshData(); } },
+        async deleteClip(uid) { if(confirm("Delete clip?")) { await fetch('/api/delete_clip', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({unique_id:uid, projectId:this.currentProject.id})}); this.refreshData(); } },
         async saveClipDetails() { 
             if(!this.librarySelectedClip) return; 
-            await fetch('/api/clip/update', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ id:this.librarySelectedClip.unique_id, name:this.librarySelectedClip.name, isGameOver: this.librarySelectedClip.is_game_over }) }); 
+            await fetch('/api/clip/update', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ projectId:this.currentProject.id, id:this.librarySelectedClip.unique_id, name:this.librarySelectedClip.name, isGameOver: this.librarySelectedClip.is_game_over }) });
             this.showToast("Updated!"); 
         },
-        async captureThumbnail() { if(!this.librarySelectedClip || !this.$refs.libraryPlayer) return; const time = this.$refs.libraryPlayer.currentTime; const res = await fetch('/api/clip/thumbnail', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id:this.librarySelectedClip.unique_id, time}) }); const data = await res.json(); if(data.success) { this.librarySelectedClip.thumbnail = data.thumbnail + '?t=' + Date.now(); this.showToast("Thumbnail Set!"); } },
+        async captureThumbnail() { if(!this.librarySelectedClip || !this.$refs.libraryPlayer) return; const time = this.$refs.libraryPlayer.currentTime; const res = await fetch('/api/clip/thumbnail', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({projectId:this.currentProject.id, id:this.librarySelectedClip.unique_id, time}) }); const data = await res.json(); if(data.success) { this.librarySelectedClip.thumbnail = data.thumbnail + '?t=' + Date.now(); this.showToast("Thumbnail Set!"); } },
 
         // --- LOGIC EDITOR ---
         loadLogicSource() { this.showLogicOverlay = false; this.currentEditingBlock = null; this.seenSegments = []; if(this.logicSourceId) { const c = this.logicSourceClip; if(c) { this.logicBgMusic = c.bg_music; this.logicMuteVideo = !!c.mute_audio; this.$nextTick(() => { if(this.$refs.logicPlayer) { this.$refs.logicPlayer.load(); this.$refs.logicPlayer.muted = this.logicMuteVideo; } this.playPreviewMusic(this.logicBgMusic); }); } } },
@@ -496,8 +496,8 @@ createApp({
         editBlock(block) { this.$refs.logicPlayer.pause(); this.$refs.logicPlayer.currentTime = block.triggerTime; this.currentEditingBlock = JSON.parse(JSON.stringify(block)); this.showLogicOverlay = true; },
         addOption() { if(this.currentEditingBlock.choices.length<4) this.currentEditingBlock.choices.push({toId:null, label:'', color:'#ffffff', return:false, setVar:'', reqVar:''}); },
         
-        async saveLogicBlock() { if(!this.logicSourceId) return; try { await fetch('/api/save_logic_block', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ projectId: this.currentProject.id, fromId: this.logicSourceId, logicId: this.currentEditingBlock.id, triggerTime: this.currentEditingBlock.triggerTime, returnToMain: this.currentEditingBlock.returnToMain, choices: this.currentEditingBlock.choices, bgMusic: this.logicBgMusic, muteAudio: this.logicMuteVideo }) }); this.showToast("Saved!"); await this.refreshData(); this.currentEditingBlock = null; this.showLogicOverlay = false; } catch(e) { this.showToast("Error", 'error'); } },
-        async deleteLogicBlock() { if(!confirm("Delete?")) return; try { await fetch('/api/delete_logic_block', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ logicId: this.currentEditingBlock.id, fromId: this.logicSourceId, triggerTime: this.currentEditingBlock.triggerTime }) }); this.showToast("Deleted"); await this.refreshData(); this.currentEditingBlock = null; this.showLogicOverlay = false; } catch(e) { this.showToast("Error", 'error'); } },
+        async saveLogicBlock() { if(!this.logicSourceId) return; try { const blockId = this.currentEditingBlock.id?.startsWith('legacy_') ? null : this.currentEditingBlock.id; await fetch('/api/save_logic_block', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ projectId: this.currentProject.id, fromId: this.logicSourceId, logicId: blockId, triggerTime: this.currentEditingBlock.triggerTime, returnToMain: this.currentEditingBlock.returnToMain, choices: this.currentEditingBlock.choices, bgMusic: this.logicBgMusic, muteAudio: this.logicMuteVideo }) }); this.showToast("Saved!"); await this.refreshData(); this.currentEditingBlock = null; this.showLogicOverlay = false; } catch(e) { this.showToast("Error", 'error'); } },
+        async deleteLogicBlock() { if(!confirm("Delete?")) return; try { const blockId = this.currentEditingBlock.id?.startsWith('legacy_') ? null : this.currentEditingBlock.id; await fetch('/api/delete_logic_block', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ projectId: this.currentProject.id, logicId: blockId, fromId: this.logicSourceId, triggerTime: this.currentEditingBlock.triggerTime }) }); this.showToast("Deleted"); await this.refreshData(); this.currentEditingBlock = null; this.showLogicOverlay = false; } catch(e) { this.showToast("Error", 'error'); } },
         getClipThumb(id) {
     if (!id) return '';
     const c = this.clips.find(x => x.unique_id === id);
@@ -541,7 +541,7 @@ createApp({
         },
         async deleteEdge(edgeId) {
             if(confirm("Remove this connection?")) {
-                await fetch('/api/edge/delete', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ id: edgeId }) });
+                await fetch('/api/edge/delete', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ projectId: this.currentProject.id, id: edgeId }) });
                 this.refreshData();
             }
         },
@@ -563,7 +563,7 @@ createApp({
         zoomGraph(e) { e.preventDefault(); this.zoom += e.deltaY * -0.001; this.zoom = Math.min(Math.max(0.5, this.zoom), 2); },
         startDragNode(e, node) { this.isDraggingNode = true; this.dragNodeId = node.unique_id; },
         selectNode(node) { this.isGraphMode = false; this.isPublishGraphMode = false; this.logicSourceId = node.unique_id; this.loadLogicSource(); this.view = 'logic'; },
-        async saveNodePositions() { const updates = this.clips.map(c => ({ id: c.unique_id, x: c.x || 0, y: c.y || 0 })); await fetch('/api/clip/positions', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ updates }) }); this.showToast("Layout Saved!"); },
+        async saveNodePositions() { const updates = this.clips.map(c => ({ id: c.unique_id, x: c.x || 0, y: c.y || 0 })); await fetch('/api/clip/positions', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ projectId: this.currentProject.id, updates }) }); this.showToast("Layout Saved!"); },
         createEdgeObj(id, fromId, toId, label, isReturn, isSequence) {
             const fromNode = this.displayedGraphNodes.find(n => n.unique_id === fromId);
             const toNode = this.displayedGraphNodes.find(n => n.unique_id === toId);

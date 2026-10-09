@@ -31,7 +31,7 @@ StudioInfinity is an end-to-end interactive video creation platform. It allows c
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org/) (v16 or higher recommended)
+- [Node.js](https://nodejs.org/) (v18 or higher recommended)
 - [npm](https://www.npmjs.com/)
 
 ### Installation
@@ -58,6 +58,18 @@ StudioInfinity is an end-to-end interactive video creation platform. It allows c
 
 4. **Open in browser:**
    Navigate to [http://localhost:3000](http://localhost:3000)
+
+5. **Run regression checks:**
+   ```bash
+   npm test
+   ```
+
+### Local security and configuration
+
+- StudioInfinity is an unauthenticated, single-user editor intended for local use. The server binds to `127.0.0.1` by default, rejects non-loopback `STUDIO_HOST` values, and rejects requests with unexpected `Host` or cross-origin `Origin` headers. Do not expose it directly to a LAN or the public internet.
+- `PORT` may be set to an integer from `1` to `65535`; the default is `3000`. `STUDIO_HOST` may be `127.0.0.1`, `localhost`, or `::1`.
+- `DATABASE_PATH` optionally selects the SQLite file. By default, `database.sqlite` is placed beside `server.js`, regardless of the shell’s current directory.
+- Uploads are selected by an exact audio/video filename extension and are limited to 2 GB. Media paths are checked to remain within `public/` when removed or included in exports.
 
 ---
 

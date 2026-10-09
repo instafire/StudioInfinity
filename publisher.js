@@ -1,29 +1,42 @@
 const fs = require('fs-extra');
 const path = require('path');
 const { getDB } = require('./database');
+const { escapeHtml, normalizeThemeColor, resolvePublicAssetPath } = require('./lib/security');
 
 /**
  * Publishes the project to a standalone HTML build.
  */
 async function publishProject(projectId, title, sequence, publicDir) {
+    const normalizedProjectId = Number(projectId);
+    const safeTitle = typeof title === 'string' ? title.trim().slice(0, 120) : '';
+    if (!Number.isSafeInteger(normalizedProjectId) || normalizedProjectId <= 0) throw new Error('Invalid project ID.');
+    if (!safeTitle) throw new Error('A project title is required.');
+    if (!Array.isArray(sequence) || sequence.length === 0 || sequence.length > 500 || sequence.some(item => !item || typeof item.id !== 'string')) {
+        throw new Error('A valid story sequence is required.');
+    }
+
     const db = getDB();
-    const project = await db.get('SELECT * FROM projects WHERE id = ?', [projectId]);
+    const project = await db.get('SELECT * FROM projects WHERE id = ?', [normalizedProjectId]);
     if (!project) throw new Error('Project not found');
 
-    const themeColor = project.theme_color || '#3b82f6';
+    const themeColor = normalizeThemeColor(project.theme_color);
     // Create a safe folder name
-    const exportName = `${title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_${projectId}`;
+    const exportName = `${safeTitle.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_${normalizedProjectId}`;
     const exportPath = path.join(publicDir, 'exports', exportName);
 
-    // 1. Prepare Folders
-    await fs.emptyDir(exportPath);
-    await fs.ensureDir(path.join(exportPath, 'clips'));
-    await fs.ensureDir(path.join(exportPath, 'audio'));
-
-    // 2. Gather Assets
-    let allClips = await db.all('SELECT * FROM clips WHERE project_id = ?', [projectId]);
-    const edges = await db.all('SELECT * FROM edges WHERE project_id = ? ORDER BY trigger_time ASC', [projectId]);
-    const variables = await db.all('SELECT * FROM variables WHERE project_id = ?', [projectId]);
+    // 1. Gather Assets
+    let allClips = await db.all('SELECT * FROM clips WHERE project_id = ?', [normalizedProjectId]);
+    const edges = await db.all('SELECT * FROM edges WHERE project_id = ? ORDER BY trigger_time ASC', [normalizedProjectId]);
+    const variables = await db.all('SELECT * FROM variables WHERE project_id = ?', [normalizedProjectId]);
+    const projectClipIds = new Set(allClips.map(clip => clip.unique_id));
+    if (sequence.some(item => !projectClipIds.has(item.id))) throw new Error('Story sequence contains a clip from another project.');
+    if (edges.some(edge => !projectClipIds.has(edge.from_id) || (edge.to_id && !projectClipIds.has(edge.to_id)))) {
+        throw new Error('Story graph contains an edge to a clip outside this project.');
+    }
+    const reservedVariableNames = new Set(['__proto__', 'constructor', 'prototype']);
+    const exportVariables = variables.filter(variable => typeof variable.name === 'string' &&
+        /^[a-z][a-z0-9_]{0,39}$/i.test(variable.name) && !reservedVariableNames.has(variable.name.toLowerCase()));
+    const exportVariableNames = new Set(exportVariables.map(variable => variable.name));
 
     // Filter down to only clips used in the sequence or as options
     const usedClipIds = new Set();
@@ -34,6 +47,14 @@ async function publishProject(projectId, title, sequence, publicDir) {
     });
 
     const clips = allClips.filter(c => usedClipIds.has(c.unique_id));
+    const assetSources = new Map();
+    for (const clip of clips) {
+        const videoSource = await resolvePublicAssetPath(publicDir, clip.filepath);
+        if (!videoSource) throw new Error('A story clip is missing or has an unsafe media path.');
+        const thumbnailSource = clip.thumbnail ? await resolvePublicAssetPath(publicDir, clip.thumbnail) : null;
+        const audioSource = clip.bg_music ? await resolvePublicAssetPath(publicDir, clip.bg_music) : null;
+        assetSources.set(clip.unique_id, { videoSource, thumbnailSource, audioSource });
+    }
 
     // --- SMART SKIP CALCULATION ---
     // This logic pre-calculates redundant video segments to skip them in the player
@@ -107,39 +128,39 @@ async function publishProject(projectId, title, sequence, publicDir) {
         }
     });
 
-    // 3. Copy Files
+    // 3. Prepare and copy files only after every required video asset passes validation.
+    await fs.emptyDir(exportPath);
+    await fs.ensureDir(path.join(exportPath, 'clips'));
+    await fs.ensureDir(path.join(exportPath, 'audio'));
+
     for (const clip of clips) {
+        const sources = assetSources.get(clip.unique_id);
         // Copy Video
-        const src = path.join(publicDir, clip.filepath);
-        const filename = path.basename(clip.filepath);
-        if (await fs.pathExists(src)) {
-            await fs.copy(src, path.join(exportPath, 'clips', filename));
-            clip.filepath = `clips/${filename}`;
-        }
+        const filename = path.basename(sources.videoSource);
+        await fs.copy(sources.videoSource, path.join(exportPath, 'clips', filename));
+        clip.filepath = `clips/${filename}`;
         
         // Copy Thumbnail
-        if (clip.thumbnail) {
-            const thumbName = path.basename(clip.thumbnail);
-            const thumbSrc = path.join(publicDir, clip.thumbnail);
-            if (await fs.pathExists(thumbSrc)) {
-                await fs.copy(thumbSrc, path.join(exportPath, 'clips', thumbName));
-                clip.thumbnail = `clips/${thumbName}`;
-            }
+        if (sources.thumbnailSource) {
+            const thumbName = path.basename(sources.thumbnailSource);
+            await fs.copy(sources.thumbnailSource, path.join(exportPath, 'clips', thumbName));
+            clip.thumbnail = `clips/${thumbName}`;
+        } else {
+            clip.thumbnail = '';
         }
 
         // Copy Audio
-        if (clip.bg_music) {
-            const audName = path.basename(clip.bg_music);
-            const audSrc = path.join(publicDir, clip.bg_music.replace(/^\/+/, ''));
-            if (await fs.pathExists(audSrc)) {
-                await fs.copy(audSrc, path.join(exportPath, 'audio', audName));
-                clip.bg_music = `audio/${audName}`;
-            }
+        if (sources.audioSource) {
+            const audName = path.basename(sources.audioSource);
+            await fs.copy(sources.audioSource, path.join(exportPath, 'audio', audName));
+            clip.bg_music = `audio/${audName}`;
+        } else {
+            clip.bg_music = '';
         }
     }
 
     // 4. Build Logic Blocks
-    const logicBlocks = {};
+    const logicBlocks = Object.create(null);
     edges.forEach(e => {
         if (!e.to_id) return;
         const key = e.logic_id || `time_${e.trigger_time}_${e.from_id}`;
@@ -154,29 +175,32 @@ async function publishProject(projectId, title, sequence, publicDir) {
         logicBlocks[key].choices.push({
             to: e.to_id, 
             label: e.label, 
-            color: e.text_color, 
+            color: normalizeThemeColor(e.text_color, '#ffffff'),
             return: !!e.return_to_main, 
-            setVar: e.set_var, 
-            reqVar: e.req_var
+            setVar: exportVariableNames.has(e.set_var) ? e.set_var : null,
+            reqVar: exportVariableNames.has(e.req_var) ? e.req_var : null
         });
     });
 
     // 5. Generate HTML
-    const htmlContent = generateHTMLTemplate(title, themeColor, clips, logicBlocks, sequence, variables, projectId);
+    const htmlContent = generateHTMLTemplate(safeTitle, themeColor, clips, logicBlocks, sequence, exportVariables, normalizedProjectId);
     await fs.writeFile(path.join(exportPath, 'index.html'), htmlContent);
 
     return `/exports/${exportName}/index.html`;
 }
 
 function generateHTMLTemplate(title, themeColor, clips, logicBlocks, sequence, variables, projectId) {
+    const safeTitle = escapeHtml(title);
+    const safeThemeColor = normalizeThemeColor(themeColor);
     // Embed data directly into HTML
     const clipsB64 = Buffer.from(JSON.stringify(clips)).toString('base64');
     const blocksB64 = Buffer.from(JSON.stringify(Object.values(logicBlocks))).toString('base64');
     const playlistB64 = Buffer.from(JSON.stringify(sequence || [])).toString('base64');
     
     // Create initial game state from variables
-    const initialState = {};
-    variables.forEach(v => initialState[v.name] = v.initial_value === 1);
+    const initialState = Object.create(null);
+    variables.filter(v => typeof v.name === 'string' && /^[a-z][a-z0-9_]{0,39}$/i.test(v.name) && !['__proto__', 'constructor', 'prototype'].includes(v.name.toLowerCase()))
+        .forEach(v => initialState[v.name] = v.initial_value === 1);
     const stateB64 = Buffer.from(JSON.stringify(initialState)).toString('base64');
 
     return `<!DOCTYPE html>
@@ -184,7 +208,7 @@ function generateHTMLTemplate(title, themeColor, clips, logicBlocks, sequence, v
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>${title}</title>
+    <title>${safeTitle}</title>
     
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
@@ -212,7 +236,7 @@ function generateHTMLTemplate(title, themeColor, clips, logicBlocks, sequence, v
         .timeline-track:hover { height: 14px; }
         
         .timeline-fill { 
-            height: 100%; background: ${themeColor}; 
+            height: 100%; background: ${safeThemeColor};
             border-radius: 5px; position: absolute; top: 0; left: 0; z-index: 20;
         }
         .timeline-marker { 
@@ -248,7 +272,7 @@ function generateHTMLTemplate(title, themeColor, clips, logicBlocks, sequence, v
         .start-screen { position: absolute; inset: 0; z-index: 50; background: url('https://source.unsplash.com/random/1920x1080?cinema') center/cover; display: flex; align-items: center; justify-content: center; }
         .start-overlay { background: rgba(0,0,0,0.85); inset: 0; position: absolute; }
         .start-content { position: relative; z-index: 10; text-align: center; }
-        .play-btn-huge { font-size: 5rem; color: ${themeColor}; cursor: pointer; transition: transform 0.2s; filter: drop-shadow(0 0 20px ${themeColor}); }
+        .play-btn-huge { font-size: 5rem; color: ${safeThemeColor}; cursor: pointer; transition: transform 0.2s; filter: drop-shadow(0 0 20px ${safeThemeColor}); }
         .play-btn-huge:hover { transform: scale(1.1); color: #fff; }
 
         .glitch { font-size: 3rem; font-weight: bold; color: #ef4444; text-shadow: 2px 2px #000; animation: glitch 1s infinite; margin-bottom: 2rem; }
@@ -365,7 +389,7 @@ function generateHTMLTemplate(title, themeColor, clips, logicBlocks, sequence, v
             <div v-if="!started" class="start-screen">
                 <div class="start-overlay"></div>
                 <div class="start-content">
-                    <h1 class="text-4xl font-bold mb-2 tracking-widest uppercase text-white">${title}</h1>
+                    <h1 class="text-4xl font-bold mb-2 tracking-widest uppercase text-white">${safeTitle}</h1>
                     <div class="play-btn-huge" @click="startStory">▶</div>
                     <div class="text-slate-400 mt-4 text-sm uppercase tracking-wider">Interactive Experience</div>
                 </div>
@@ -693,4 +717,4 @@ function generateHTMLTemplate(title, themeColor, clips, logicBlocks, sequence, v
 </html>`;
 }
 
-module.exports = { publishProject };
+module.exports = { generateHTMLTemplate, publishProject };
